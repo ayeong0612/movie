@@ -318,6 +318,48 @@ try:
         "음수이면 일부 영화가 다른 묶음에 더 가까울 수 있습니다."
     )
 
+# 실루엣 점수를 묶음별로 비교하는 그래프
+silhouette_rows = []
+
+for k in range(2, min(7, len(valid) - 1) + 1):
+    temp_model = KMeans(
+        n_clusters=k,
+        random_state=42,
+        n_init=10,
+    )
+    temp_labels = temp_model.fit_predict(X_scaled)
+
+    temp_score = silhouette_score(X_scaled, temp_labels)
+
+    silhouette_rows.append({
+        "묶음 수": k,
+        "실루엣 점수": temp_score,
+    })
+
+silhouette_df = pd.DataFrame(silhouette_rows)
+
+fig_silhouette = px.line(
+    silhouette_df,
+    x="묶음 수",
+    y="실루엣 점수",
+    markers=True,
+    title="묶음 수에 따른 실루엣 점수",
+)
+
+fig_silhouette.add_vline(
+    x=cluster_count,
+    line_dash="dash",
+    line_color="red",
+    annotation_text=f"현재 선택: {cluster_count}개",
+)
+
+fig_silhouette.update_layout(
+    xaxis={"tickmode": "linear", "dtick": 1},
+    yaxis={"range": [-1, 1]},
+)
+
+st.plotly_chart(fig_silhouette, use_container_width=True)
+
 except Exception as error:
     st.warning(f"실루엣 점수를 계산하지 못했습니다: {error}")
 
