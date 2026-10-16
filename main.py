@@ -76,7 +76,7 @@ def load_movies():
     # 롱런 지수가 20을 넘으면 20으로 제한
     df["longrun_index"] = df["longrun_index"].clip(upper=20)
 
-    # 스크린 수와 누적 관객 수에 상용로그 적용
+    # 스크린 수에 상용로그 적용
     df["log_first_scrn"] = float("nan")
     positive_screens = df["first_scrn"] > 0
 
@@ -84,6 +84,7 @@ def load_movies():
         df.loc[positive_screens, "first_scrn"].map(math.log10)
     )
 
+    # 누적 관객 수에 상용로그 적용
     df["log_total_audi"] = float("nan")
     positive_audience = df["total_audi"] > 0
 
@@ -159,7 +160,7 @@ X_scaled = scaler.fit_transform(
 
 
 # --------------------------------------------------
-# 2. 묶음 수별 WCSS 계산
+# 2. 묶음 수별 WCSS 계산 및 그래프
 # --------------------------------------------------
 
 st.subheader("2. 적절한 묶음 수 살펴보기")
@@ -224,7 +225,7 @@ fig_elbow.add_vline(
 
 st.plotly_chart(fig_elbow, use_container_width=True)
 
-# 바로 앞 묶음 수의 WCSS에서 현재 WCSS를 뺀 값
+# 직전 묶음 수에서 얼마나 감소했는지 계산
 wcss_df["직전 값 대비 감소량"] = (
     wcss_df["WCSS"].shift(1) - wcss_df["WCSS"]
 )
@@ -294,12 +295,17 @@ color_map = {
 
 
 # --------------------------------------------------
-# 4. 실루엣 점수
+# 4. 실루엣 점수와 실루엣 점수 그래프
 # --------------------------------------------------
 
 st.subheader("3. 현재 묶음 수의 실루엣 점수")
 
 try:
+    if len(valid) <= cluster_count:
+        raise ValueError(
+            "실루엣 점수를 계산하려면 영화 수가 묶음 수보다 많아야 합니다."
+        )
+
     score = silhouette_score(
         X_scaled,
         valid["군집번호"],
@@ -318,50 +324,94 @@ try:
         "음수이면 일부 영화가 다른 묶음에 더 가까울 수 있습니다."
     )
 
-# 실루엣 점수를 묶음별로 비교하는 그래프
+except Exception as error:
+    st.warning(f"실루엣 점수를 계산하지 못했습니다: {error}")
+
+
+# 묶음 수 2~7 각각의 실루엣 점수 계산
+st.write("### 묶음 수에 따른 실루엣 점수 비교")
+
 silhouette_rows = []
+silhouette_max_k = min(7, len(valid) - 1)
 
-for k in range(2, min(7, len(valid) - 1) + 1):
-    temp_model = KMeans(
-        n_clusters=k,
-        random_state=42,
-        n_init=10,
-    )
-    temp_labels = temp_model.fit_predict(X_scaled)
+for k in range(2, silhouette_max_k + 1):
+    try:
+        silhouette_model = KMeans(
+            n_clusters=k,
+            random_state=42,
+            n_init=10,
+        )
 
-    temp_score = silhouette_score(X_scaled, temp_labels)
+        silhouette_labels = silhouette_model.fit_predict(X_scaled)
 
-    silhouette_rows.append({
-        "묶음 수": k,
-        "실루엣 점수": temp_score,
-    })
+        silhouette_value = silhouette_score(
+            X_scaled,
+            silhouette_labels,
+        )
+
+        silhouette_rows.append({
+            "묶음 수": k,
+            "실루엣 점수": silhouette_value,
+        })
+
+    except Exception:
+        continue
 
 silhouette_df = pd.DataFrame(silhouette_rows)
 
-fig_silhouette = px.line(
-    silhouette_df,
-    x="묶음 수",
-    y="실루엣 점수",
-    markers=True,
-    title="묶음 수에 따른 실루엣 점수",
-)
+if not silhouette_df.empty:
+    fig_silhouette = px.line(
+        silhouette_df,
+        x="묶음 수",
+        y="실루엣 점수",
+        markers=True,
+        title="묶음 수에 따른 실루엣 점수",
+    )
 
-fig_silhouette.add_vline(
-    x=cluster_count,
-    line_dash="dash",
-    line_color="red",
-    annotation_text=f"현재 선택: {cluster_count}개",
-)
+    fig_silhouette.update_traces(
+        line={"width": 3},
+        marker={"size": 9},
+    )
 
-fig_silhouette.update_layout(
-    xaxis={"tickmode": "linear", "dtick": 1},
-    yaxis={"range": [-1, 1]},
-)
+    fig_silhouette.update_layout(
+        xaxis={
+            "tickmode": "linear",
+            "dtick": 1,
+            "title": "묶음 수",
+        },
+        yaxis={
+            "range": [-1, 1],
+            "title": "실루엣 점수",
+        },
+        hovermode="x unified",
+    )
 
-st.plotly_chart(fig_silhouette, use_container_width=True)
+    # 현재 선택한 묶음 수 위치에 빨간 세로선 표시
+    fig_silhouette.add_vline(
+        x=cluster_count,
+        line_dash="dash",
+        line_width=2,
+        line_color="red",
+        annotation_text=f"현재 선택: {cluster_count}개",
+        annotation_position="top right",
+    )
 
-except Exception as error:
-    st.warning(f"실루엣 점수를 계산하지 못했습니다: {error}")
+    st.plotly_chart(
+        fig_silhouette,
+        use_container_width=True,
+    )
+
+    st.dataframe(
+        silhouette_df.style.format({
+            "묶음 수": "{:.0f}",
+            "실루엣 점수": "{:.3f}",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+else:
+    st.info("실루엣 점수 그래프를 만들 수 있는 데이터가 부족합니다.")
 
 
 # --------------------------------------------------
